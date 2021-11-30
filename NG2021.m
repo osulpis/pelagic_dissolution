@@ -13,6 +13,9 @@ close all
 
 %% Load data files
 
+
+%load raw 2016 GLODAP dataset
+load('GLODAPv2_Merged_Master_File.mat');
 %load raw 2016 GLODAP dataset (Olsen et al., 2016, ESSD)
 %load seafloor CaCO3 burial rates (total sed burial rates are from Jahnke 1996 GBC, shared by Nicolas Gruber, and CaCO3 sed contents are from Jenkins 1997 ST)
 %load Biomes from Fay and McKinley (2014 ESSD) and their 2D and 3D mapped versions
@@ -63,13 +66,14 @@ G2_age=TTD_age;
 
 % Then we create a transition zone in which the used age is from a mixture of TTD and 14C
 for i=1:size(TTD_age)
-    if TTD_age(i) >= 200 && TTD_age(i) <= 300  %transition period between 80 and 120 years
-        transition_coef(i) = (abs(TTD_age(i)-300))./100;  %linear transition
-        G2_age(i) = transition_coef(i)*TTD_age(i) + transition_coef(i)*C14_age(i);
-    elseif TTD_age(i) > 300 %Finally, above 120 years, we use 14C ages only 
+    if TTD_age(i) >= 200 && TTD_age(i) <= 300  %transition period between 200 and 300 years
+        transition_coef(i) = (TTD_age(i)-200)./100;  %linear transition
+        G2_age(i) = (1-transition_coef(i))*TTD_age(i) + transition_coef(i)*C14_age(i);
+ elseif TTD_age(i) > 300 %Finally, above 300 years, we use 14C ages only 
         G2_age(i)=C14_age(i);
     end 
 end
+
 
 %% Compute Alk* excess alkalinity
 
@@ -83,6 +87,8 @@ G2talk_combined(isnan(G2talk))=G2talk_calc(isnan(G2talk));
 
 %Equations (1) and (5) from Carter et al., Biogeosciences, 2014
 Alk_star=G2talk_combined+1.26.*G2nitrate-66.4.*G2salinity;
+%TA*, computed from Feely et al. (2002)
+TA_star= 0.5*(G2talk.*35./G2salinity - (148.7+(61.36*G2salinity)+(0.0941*(G2oxygen+170.*G2phosphate))-(0.582*G2theta)).*35./G2salinity) + 0.05922*G2aou;
 
 %% Compute CaCO3 dissolution rates
 
@@ -93,17 +99,18 @@ binningmethod = 1;
 G2_b=unique(G2biomes(~isnan(G2biomes)))';
 
 %Set up MonteCarlo
-MC=20; %number of Monte Carlo simulations
+MC=2000; %number of Monte Carlo simulations
 minimum_sigma_increment=0.002;
 maximum_sigma_increment=0.05;
 Alkstar_uncertainty=6; %[umol/kg], standard TAlk uncertainty from GLODAP
+TAstar_uncertainty=6; %[umol/kg], standard TAlk uncertainty from GLODAP
 age_uncertainty=0.2; %set to 20%, a standard relative uncertainty for CFC and 14C ages
 minimum_sigma0=24;
 maximum_sigma0=28;
 max_sigma0bins=[minimum_sigma0:minimum_sigma_increment:maximum_sigma0]; 
-
 %Results will be stored here: first dimension is Monte Carlo simulation number, 2nd dimension is biome number, 3rd dimension in density bin number 
 Alkstar_rate=NaN(MC,size(G2_b,2),size(max_sigma0bins,2)); 
+TAstar_rate=NaN(MC,size(G2_b,2),size(max_sigma0bins,2)); 
 Alkstar_rate_depth=NaN(MC,size(G2_b,2),size(max_sigma0bins,2));
 Alkstar_rate_maxdepth=NaN(MC,size(G2_b,2),size(max_sigma0bins,2));
 Alkstar_rate_mindepth=NaN(MC,size(G2_b,2),size(max_sigma0bins,2));
@@ -119,30 +126,35 @@ for h=1:MC %FIRST FOR-LOOP: Monte Carlo for-loop
     
     %Alk Star, age, and sigma increment will randomnly change at each MC simulation
     errAlkstar=2*Alkstar_uncertainty.*rand(size(G2_age,1),1);
+    errTAstar=2*TAstar_uncertainty.*rand(size(G2_age,1),1);
     errage=G2_age.*2.*age_uncertainty.*rand(size(G2_age,1),1);
     sigma_increment=(maximum_sigma_increment-minimum_sigma_increment)*rand(1)+minimum_sigma_increment;
    %"random" values
-     rAlk_star=Alk_star-Alkstar_uncertainty+errAlkstar;
-     rG2_age=G2_age-G2_age.*age_uncertainty+errage;    
-     rG2_age(rG2_age<0)=NaN;    
+    rAlk_star=Alk_star-Alkstar_uncertainty+errAlkstar;
+    rTA_star=TA_star-TAstar_uncertainty+errTAstar;
+    rG2_age=G2_age-G2_age.*age_uncertainty+errage;    
+    rG2_age(rG2_age<0)=NaN;    
    
     for i=1:size(G2_b,2) %SECOND FOR-LOOP: for each biome, computes CaCO3 dissolution rates
     
         bsigma0=G2sigma0(G2biomes==G2_b(i));  %densities in a given biome
         bAlk_star=rAlk_star(G2biomes==G2_b(i));    %Alk_star in a given biome
+        bTA_star=rTA_star(G2biomes==G2_b(i));      %TA_star in a given biome
         bage=rG2_age(G2biomes==G2_b(i));           %seawater age in a given biome
         bdepth=G2depth(G2biomes==G2_b(i));        %depths in a given biome
     
         [~,a]=sort(bsigma0,'descend'); %a is a dummy vector that sorts data according to descending sigma0
         bAlk_star=bAlk_star(a,:);    %Alk_star is sorted according to decreasing density
+        bTA_star=bTA_star(a,:);    %Alk_star is sorted according to decreasing density
         bage=bage(a,:);                  %sw age is sorted according to decreasing density
         bsigma0=bsigma0(a,:);      %sigma0 is sorted according to decreasing density
         bdepth=bdepth(a,:);            %depth is sorted according to decreasing density
         clear a
     
-        a=~isnan(bAlk_star) & ~isnan(bage) & ~isnan(bsigma0) & ~isnan(bdepth) & bdepth>100 & bage>0; 
+        a=~isnan(bAlk_star) & ~isnan(bTA_star) & ~isnan(bage) & ~isnan(bsigma0) & ~isnan(bdepth) & bdepth>100 & bage>0; 
         %a is a dummy vector that selects samples for which we have Alkstar, age, sigma, depth, positive age and below 100 m depth
         bAlk_star=bAlk_star(a==1);
+        bTA_star=bTA_star(a==1);
         bage=bage(a==1);
         bsigma0=bsigma0(a==1);
         bdepth=bdepth(a==1);
@@ -163,20 +175,25 @@ for h=1:MC %FIRST FOR-LOOP: Monte Carlo for-loop
             bsigma0max=sigma0bins(j)+sigma_increment/2; %maximum sigma0 of the density bin
             bin_age=bage(bsigma0<=bsigma0max & bsigma0>=bsigma0min); %seawater ages within bin
             bin_Alk_star=bAlk_star(bsigma0<=bsigma0max & bsigma0>=bsigma0min); %Alkstar within bin
+            bin_TA_star=bTA_star(bsigma0<=bsigma0max & bsigma0>=bsigma0min); %Alkstar within bin
             bin_sigma0=bsigma0(bsigma0<=bsigma0max & bsigma0>=bsigma0min); %denities within bin
             bin_depth=bdepth(bsigma0<=bsigma0max & bsigma0>=bsigma0min); %depths within bin
             bin_nbsp=size(bin_depth,1); %number of data points within bin
             [b,~,~,~,stats]=regress(bin_Alk_star,[ones(size(bin_age)) bin_age]); %linear fit of ALk star versus age within
+            [bb,~,~,~,~]=regress(bin_TA_star,[ones(size(bin_age)) bin_age]); %linear fit of TA star versus age within
             %bin. "b" is the slope of the fit, needs to be divided by two to
+            %"bb" doesn't need to be divided be two because of the way TAstar is defined
             %give the dissolution rate. "stats" are stats associated with the fit
             else
             bin_age=bage(j:j+steps-1);                     %seawater age within the bin
             bin_Alk_star=bAlk_star(j:j+steps-1);       %Alk_star within the bin
+            bin_TA_star=bTA_star(j:j+steps-1);       %Alk_star within the bin
             bin_sigma0=bsigma0(j:j+steps-1);         %sigma0 within the bin
             bin_depth=bdepth(j:j+steps-1);               %depths within the bin
             bin_nbsp=size(bin_depth,1);
             %linear fit of Alk_star versus seawater age, intercept, slope and stats are saved
             [b,~,~,~,stats]=regress(bin_Alk_star,[ones(size(bin_age)) bin_age]);
+            [bb,~,~,~,~]=regress(bin_TA_star,[ones(size(bin_age)) bin_age]);
             end
         
             %the following "if" is here to save only dissolution rates that fill some quality criteria, i.e., more than 10 data
@@ -204,6 +221,8 @@ for h=1:MC %FIRST FOR-LOOP: Monte Carlo for-loop
             binned_fits(i,bin_nb,18)=std(bin_age);            %standard deviation of age
             binned_fits(i,bin_nb,19)=min(bin_age);           %minimum age
             binned_fits(i,bin_nb,20)=max(bin_age);          %maximum age 
+            binned_fits(i,bin_nb,21)=bb(1);                       %intercept of regression Alk_star versus age (umol / kg / a)
+            binned_fits(i,bin_nb,22)=bb(2);                       %slope of regression Alk_star versus age (umol / kg / a)
             end
         
         bin_nb=bin_nb+1;    
@@ -216,6 +235,9 @@ for h=1:MC %FIRST FOR-LOOP: Monte Carlo for-loop
     %important results are stored separately
     %1st dimension is Monte Carlo #, 2nd dimension is biome #, 3rd dimension is bin #
     Alkstar_rate(h,1:size(G2_b,2),1:size(binned_fits,2),:)=binned_fits(:,:,2)./2; %CaCO3 dissolution rate in [umol/kg/a]: slope of each fit divided by 2 (one mol of CaCO3 dissolved adds 2 moles of Alk)
+    %/!\/!\ If TA_star is used instead of Alk_star, the slope is not
+    %divided by two, use the following instead
+    TAstar_rate(h,1:size(G2_b,2),1:size(binned_fits,2),:)=binned_fits(:,:,22); %CaCO3 dissolution rate in [umol/kg/a]: slope of each fit divided by 2 (one mol of CaCO3 dissolved adds 2 moles of Alk)
     Alkstar_rate_depth(h,1:size(G2_b,2),1:size(binned_fits,2),:)=binned_fits(:,:,4);%mean depth for CaCO3 dissolution rate
     Alkstar_rate_maxdepth(h,1:size(G2_b,2),1:size(binned_fits,2),:)=binned_fits(:,:,7);%max depth for CaCO3 dissolution rate
     Alkstar_rate_mindepth(h,1:size(G2_b,2),1:size(binned_fits,2),:)=binned_fits(:,:,6);%min depth for CaCO3 dissolution rate
@@ -228,13 +250,15 @@ for h=1:MC %FIRST FOR-LOOP: Monte Carlo for-loop
     sigma_range(h)=sigma_increment;%sigma increment used for a given Monte Carlo simulation
     clear binned_fits
     Alkstar_rate(Alkstar_rate<0)=NaN;
+    TAstar_rate(TAstar_rate<0)=NaN;
     
 end
 
 %% Compute seafloor accumulation and seafloor dissolution rate in continuous depth profiles
 
 %a new continuous depth vector is created for interpolation: 6000 represents the maximum depth achievable
-new_rate=NaN(MC,size(G2_b,2),6000);    %empty vector for interpolated dissolution rates 
+new_Alkstar_rate=NaN(MC,size(G2_b,2),6000);    %empty vector for interpolated dissolution rates 
+new_TAstar_rate=NaN(MC,size(G2_b,2),6000);    %empty vector for interpolated dissolution rates 
 new_Fpic=NaN(MC,size(G2_b,2),6000);   %empty vector for interpolated sinking fluxes (PIC fluxes)
 new_acc=NaN(MC,size(G2_b,2),6000);     %empty vector for interpolated CaCO3 sediment accumulation rate at a given depth
 new_swi=NaN(MC,size(G2_b,2),6000);      %empty vector for interpolated CaCO3 sediment dissolution rate at a given depth
@@ -320,7 +344,8 @@ for i=1:size(G2_b,2) %we select only the non-high latitudes biomes
             %Spline curve fitting, see https://nl.mathworks.com/help/curvefit/examples/cubic-smoothing-splines.html 
             %the nb of points in each bin is used as a weight for the spline curve fitting
             new_wdepth(h,i,round(min(Alkstar_rate_depth(h,i,:))):round(max(Alkstar_rate_depth(h,i,:))))=[round(min(Alkstar_rate_depth(h,i,:))):1:round(max(Alkstar_rate_depth(h,i,:)))];
-            new_rate(h,i,:)=csaps(Alkstar_rate_depth(h,i,:),Alkstar_rate(h,i,:),5e-9,new_wdepth(h,i,:),Nbofpoints(h,i,:));     
+            new_Alkstar_rate(h,i,:)=csaps(Alkstar_rate_depth(h,i,:),Alkstar_rate(h,i,:),5e-9,new_wdepth(h,i,:));%,Nbofpoints(h,i,:));    
+            new_TAstar_rate(h,i,:)=csaps(Alkstar_rate_depth(h,i,:),TAstar_rate(h,i,:),5e-9,new_wdepth(h,i,:));%,Nbofpoints(h,i,:));     
             
             %compute sinking PIC flux at maximum depth for which a CaCO3
             %was derived in a given biome
@@ -389,15 +414,18 @@ for i=1:size(G2_b,2) %we select only the non-high latitudes biomes
     plot([-1,1],[-MgCSD(i)+MgCSDstd(i),-MgCSD(i)+MgCSDstd(i)],'Color',[255/255, 209/255, 25/255],'LineWidth',1)
     plut=plot([-1,1],[-MgCSD(i),-MgCSD(i)],'Color',[255/255, 209/255, 25/255],'LineWidth',2);
     
-    plot1=plot(nanmean(squeeze(new_rate(:,i,:))),-new_tdepth,'Color',[0, 0, 0],'LineWidth',2);
-    plot1=plot(nanmean(squeeze(new_rate(:,i,:)))-1.645.*nanstd(squeeze(new_rate(:,i,:))),-new_tdepth,'Color',[0, 0, 0],'LineWidth',1);
-    plot1=plot(nanmean(squeeze(new_rate(:,i,:)))+1.645.*nanstd(squeeze(new_rate(:,i,:))),-new_tdepth,'Color',[0, 0, 0],'LineWidth',1);
+%    plot1=plot(nanmean(squeeze(new_Alkstar_rate(:,i,:))),-new_tdepth,'Color',[0, 0, 0],'LineWidth',2);
+%    plot1=plot(nanmean(squeeze(new_Alkstar_rate(:,i,:)))-1.645.*nanstd(squeeze(new_Alkstar_rate(:,i,:))),-new_tdepth,'Color',[0, 0, 0],'LineWidth',1);
+%    plot1=plot(nanmean(squeeze(new_Alkstar_rate(:,i,:)))+1.645.*nanstd(squeeze(new_Alkstar_rate(:,i,:))),-new_tdepth,'Color',[0, 0, 0],'LineWidth',1);
+    plot1=plot(nanmean(squeeze(new_TAstar_rate(:,i,:))),-new_tdepth,'Color',[0, 0, 0],'LineWidth',2);
+    plot1=plot(nanmean(squeeze(new_TAstar_rate(:,i,:)))-1.645.*nanstd(squeeze(new_TAstar_rate(:,i,:))),-new_tdepth,'Color',[0, 0, 0],'LineWidth',1);
+    plot1=plot(nanmean(squeeze(new_TAstar_rate(:,i,:)))+1.645.*nanstd(squeeze(new_TAstar_rate(:,i,:))),-new_tdepth,'Color',[0, 0, 0],'LineWidth',1);
         
     %scatter(squeeze(Alkstar_rate(1,i,:)),-squeeze(Alkstar_rate_depth(1,i,:)),50,'filled','MarkerEdgeColor',[1 0.2 0.2],'MarkerFaceColor',[1 1 1])    
     xlabel('CaCO3 diss. r. (umol / kg /a)')
     ylabel('depth (m)')
     title(['Biome #',num2str(G2_b(i))])
-    xlim([nanmin(nanmin(new_rate(:,i,:))) nanmax(nanmax(new_rate(:,i,:)))]) 
+    xlim([nanmin(nanmin(new_TAstar_rate(:,i,:))) nanmax(nanmax(new_TAstar_rate(:,i,:)))]) 
     ylim([-5500 0]) 
     xlim([-0.05 0.6]) 
     
