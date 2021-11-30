@@ -235,9 +235,8 @@ for h=1:MC %FIRST FOR-LOOP: Monte Carlo for-loop
     %important results are stored separately
     %1st dimension is Monte Carlo #, 2nd dimension is biome #, 3rd dimension is bin #
     Alkstar_rate(h,1:size(G2_b,2),1:size(binned_fits,2),:)=binned_fits(:,:,2)./2; %CaCO3 dissolution rate in [umol/kg/a]: slope of each fit divided by 2 (one mol of CaCO3 dissolved adds 2 moles of Alk)
-    %/!\/!\ If TA_star is used instead of Alk_star, the slope is not
-    %divided by two, use the following instead
-    TAstar_rate(h,1:size(G2_b,2),1:size(binned_fits,2),:)=binned_fits(:,:,22); %CaCO3 dissolution rate in [umol/kg/a]: slope of each fit divided by 2 (one mol of CaCO3 dissolved adds 2 moles of Alk)
+    %/!\/!\ If TA_star is used instead of Alk_star, the slope is not divided by two
+    TAstar_rate(h,1:size(G2_b,2),1:size(binned_fits,2),:)=binned_fits(:,:,22); %CaCO3 dissolution rate in [umol/kg/a]
     Alkstar_rate_depth(h,1:size(G2_b,2),1:size(binned_fits,2),:)=binned_fits(:,:,4);%mean depth for CaCO3 dissolution rate
     Alkstar_rate_maxdepth(h,1:size(G2_b,2),1:size(binned_fits,2),:)=binned_fits(:,:,7);%max depth for CaCO3 dissolution rate
     Alkstar_rate_mindepth(h,1:size(G2_b,2),1:size(binned_fits,2),:)=binned_fits(:,:,6);%min depth for CaCO3 dissolution rate
